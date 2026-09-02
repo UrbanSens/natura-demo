@@ -47,14 +47,23 @@
     ev.preventDefault(); e.textContent = ""; b.disabled = true; b.textContent = "Prüfe …";
     try {
       const email = document.getElementById("m").value.trim().toLowerCase(), pw = document.getElementById("p").value;
-      const salt = hexZuBytes((await (await fetch("./salt.txt", { cache: "no-store" })).text()).trim());
+      const zugaenge = await (await fetch("./zugaenge.json", { cache: "no-store" })).json();
+      const hashHex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email)))].map((x) => x.toString(16).padStart(2, "0")).join("");
+      const zugang = zugaenge[hashHex];
+      if (!zugang) throw new Error("E-Mail oder Passwort stimmen nicht.");
       const roh = await crypto.subtle.importKey("raw", new TextEncoder().encode(`${email}\n${pw}`), "PBKDF2", false, ["deriveKey"]);
-      const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 300000, hash: "SHA-256" }, roh,
+      const nutzerKey = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: hexZuBytes(zugang.s), iterations: 300000, hash: "SHA-256" }, roh,
         { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+      let key;
+      try {
+        const w = hexZuBytes(zugang.w);
+        const rohK = await crypto.subtle.decrypt({ name: "AES-GCM", iv: w.slice(0, 12) }, nutzerKey, w.slice(12));
+        key = await crypto.subtle.importKey("raw", rohK, { name: "AES-GCM" }, false, ["decrypt"]);
+      } catch { throw new Error("E-Mail oder Passwort stimmen nicht."); }
       const entschl = async (bytes) => crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12) }, key, bytes.slice(12));
       let manifest;
       try { manifest = JSON.parse(new TextDecoder().decode(await entschl(await laden("./manifest.bin")))); }
-      catch { throw new Error("E-Mail oder Passwort stimmen nicht."); }
+      catch { throw new Error("Inhalt konnte nicht entschlüsselt werden."); }
 
       b.textContent = "Entschlüssele …";
       const datei = async (pfad) => { const m = manifest[pfad]; if (!m) throw new Error(`fehlt: ${pfad}`); return new Blob([await entschl(await laden("./" + m.f))], { type: m.t }); };
