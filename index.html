@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>UrbanSens Natura</title>
+<style id="anmelde-stil">
+  :root { color-scheme: light; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f3f4f6; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #131315; }
+  .karte { width: min(380px, calc(100vw - 32px)); background: #fff; border: 1px solid #e4e4e8; border-radius: 8px; padding: 28px 28px 24px; box-shadow: 0 6px 20px rgba(16,24,40,.08); }
+  .marke { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; }
+  .marke b { font-size: 15px; letter-spacing: -.01em; white-space: nowrap; }
+  .marke span { color: #86868f; font-size: 12px; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: #6a6a73; font-size: 12.5px; }
+  label { display: block; font-size: 11.5px; color: #6a6a73; margin: 12px 0 4px; }
+  input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid #d3d3d9; border-radius: 4px; background: #fff; }
+  input:focus { outline: none; border-color: #1d4e89; box-shadow: 0 0 0 3px rgba(29,78,137,.15); }
+  button { margin-top: 18px; width: 100%; font: inherit; font-weight: 600; color: #fff; background: #1d4e89; border: 1px solid #1d4e89; border-radius: 4px; padding: 9px; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .fehler { color: #8f2f2a; font-size: 12px; margin-top: 10px; min-height: 1.2em; }
+  .fuss { margin-top: 18px; font-size: 11px; color: #a2a2aa; }
+</style>
+</head>
+<body>
+<form class="karte" id="f" autocomplete="on">
+  <div class="marke"><b>UrbanSens Natura</b><span>Naturbezogene Befunde im Kreditportfolio</span></div>
+  <h1>Anmeldung</h1>
+  <p>Zugang nur für eingeladene Adressen. Die Inhalte liegen verschlüsselt vor und werden erst nach der Anmeldung in Ihrem Browser entschlüsselt.</p>
+  <label for="m">E-Mail</label>
+  <input id="m" name="username" type="email" autocomplete="username" required placeholder="name@firma.de" />
+  <label for="p">Passwort</label>
+  <input id="p" name="password" type="password" autocomplete="current-password" required />
+  <button id="b" type="submit">Öffnen</button>
+  <div class="fehler" id="e" role="alert"></div>
+  <div class="fuss">UrbanSens · Ingdilligenz · Demo-Zugang; Anmeldedaten werden nicht gespeichert oder übertragen.</div>
+</form>
+<script>
+(() => {
+  const f = document.getElementById("f"), e = document.getElementById("e"), b = document.getElementById("b");
+  if (!crypto?.subtle) { e.textContent = "Dieser Browser unterstützt die geschützte Ansicht nicht (WebCrypto fehlt)."; b.disabled = true; return; }
+  const hexZuBytes = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
+  const laden = async (url) => new Uint8Array(await (await fetch(url, { cache: "force-cache" })).arrayBuffer());
+
+  f.addEventListener("submit", async (ev) => {
+    ev.preventDefault(); e.textContent = ""; b.disabled = true; b.textContent = "Prüfe …";
+    try {
+      const email = document.getElementById("m").value.trim().toLowerCase(), pw = document.getElementById("p").value;
+      const salt = hexZuBytes((await (await fetch("./salt.txt", { cache: "no-store" })).text()).trim());
+      const roh = await crypto.subtle.importKey("raw", new TextEncoder().encode(`${email}\n${pw}`), "PBKDF2", false, ["deriveKey"]);
+      const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 300000, hash: "SHA-256" }, roh,
+        { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+      const entschl = async (bytes) => crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12) }, key, bytes.slice(12));
+      let manifest;
+      try { manifest = JSON.parse(new TextDecoder().decode(await entschl(await laden("./manifest.bin")))); }
+      catch { throw new Error("E-Mail oder Passwort stimmen nicht."); }
+
+      b.textContent = "Entschlüssele …";
+      const datei = async (pfad) => { const m = manifest[pfad]; if (!m) throw new Error(`fehlt: ${pfad}`); return new Blob([await entschl(await laden("./" + m.f))], { type: m.t }); };
+      const js = Object.keys(manifest).filter((p) => /^assets\/.*\.js$/.test(p));
+      const css = Object.keys(manifest).filter((p) => /^assets\/.*\.css$/.test(p));
+      const jsUrl = URL.createObjectURL(await datei(js[0]));
+      const cssUrls = await Promise.all(css.map(async (p) => URL.createObjectURL(await datei(p))));
+
+      /* Laufzeitdaten der Anwendung (Wirkflaechen je Objekt) kommen ueber
+         fetch("./wirkflaeche/<ID>.json"); der Shim liefert sie entschluesselt. */
+      const echt = window.fetch.bind(window);
+      window.fetch = async (eingabe, init) => {
+        const url = typeof eingabe === "string" ? eingabe : eingabe.url;
+        const rel = url.replace(/^\.\//, "").replace(new RegExp("^" + location.origin + location.pathname.replace(/[^/]*$/, "")), "");
+        const m = manifest[rel];
+        if (m) return new Response(await entschl(await laden("./" + m.f)), { headers: { "Content-Type": m.t } });
+        return echt(eingabe, init);
+      };
+
+      /* Anmeldeseite raeumen, Anwendung starten. */
+      history.replaceState(null, "", location.pathname);
+      document.title = "UrbanSens Natura — Naturrisiko im Kreditportfolio";
+      document.getElementById("anmelde-stil").remove();
+      f.remove();
+      document.body.style.cssText = "";
+      for (const u of cssUrls) { const l = document.createElement("link"); l.rel = "stylesheet"; l.href = u; document.head.appendChild(l); }
+      const root = document.createElement("div"); root.id = "root"; document.body.appendChild(root);
+      const s = document.createElement("script"); s.type = "module"; s.src = jsUrl; document.body.appendChild(s);
+    } catch (err) {
+      e.textContent = err.message || String(err); b.disabled = false; b.textContent = "Öffnen";
+    }
+  });
+})();
+</script>
+</body>
+</html>
