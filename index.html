@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
+<meta name="build" content="dbe3fee5afda" />
 <title>UrbanSens Natura</title>
 <style id="anmelde-stil">
   :root { color-scheme: light; }
@@ -62,7 +63,8 @@
       } catch { throw new Error("E-Mail oder Passwort stimmen nicht."); }
       const entschl = async (bytes) => crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12) }, key, bytes.slice(12));
       let manifest;
-      try { manifest = JSON.parse(new TextDecoder().decode(await entschl(await laden("./manifest.bin")))); }
+      const build = document.querySelector('meta[name="build"]').content;
+      try { manifest = JSON.parse(new TextDecoder().decode(await entschl(await laden(`./manifest-${build}.bin`)))); }
       catch { throw new Error("Inhalt konnte nicht entschlüsselt werden."); }
 
       b.textContent = "Entschlüssele …";
